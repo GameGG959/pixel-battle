@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Battle — Вход</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0f1e;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: #1e2a3a;
+            padding: 40px 30px;
+            border-radius: 40px;
+            text-align: center;
+            width: 380px;
+            max-width: 100%;
+            box-shadow: 0 20px 35px rgba(0,0,0,0.4);
+        }
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #e67e22, #f39c12);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 25px;
+        }
+        input {
+            width: 100%;
+            padding: 14px 18px;
+            margin: 8px 0;
+            border-radius: 60px;
+            border: none;
+            background: #2c3e4e;
+            color: white;
+            font-size: 1rem;
+            outline: none;
+            text-align: center;
+        }
+        input:focus {
+            background: #3a4a5e;
+            box-shadow: 0 0 0 2px #e67e22;
+        }
+        button {
+            background: #e67e22;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 60px;
+            color: white;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 12px;
+            transition: 0.2s;
+        }
+        button:hover {
+            background: #f39c12;
+            transform: scale(1.02);
+        }
+        .error {
+            color: #ff8a7a;
+            background: rgba(255,0,0,0.1);
+            padding: 10px;
+            border-radius: 60px;
+            margin-top: 15px;
+            font-size: 0.85rem;
+        }
+        .success {
+            color: #7dff7d;
+            background: rgba(0,255,0,0.1);
+            padding: 10px;
+            border-radius: 60px;
+            margin-top: 15px;
+        }
+        .note {
+            font-size: 0.7rem;
+            color: #aaa;
+            margin-top: 15px;
+        }
+        .loader {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid white;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>⚔️ PIXEL BATTLE ⚔️</h1>
+    <div id="status" class="error" style="display: none;"></div>
+    
+    <input type="text" id="nickname" placeholder="👤 Ваш ник (до 8 символов)" maxlength="8" autocomplete="off">
+    
+    <button id="enterBtn">🎮 Войти / Регистрация</button>
+    <div class="note">Просто введите ник — мы вас запомним!</div>
+</div>
+
+<script>
+    const nicknameInput = document.getElementById('nickname');
+    const statusDiv = document.getElementById('status');
+    const enterBtn = document.getElementById('enterBtn');
+    
+    let isSubmitting = false;
+    
+    function showMessage(text, isError = true) {
+        statusDiv.textContent = text;
+        statusDiv.className = isError ? 'error' : 'success';
+        statusDiv.style.display = 'block';
+        setTimeout(() => {
+            if (statusDiv.style.display === 'block') statusDiv.style.display = 'none';
+        }, 4000);
+    }
+    
+    function setLoading(loading) {
+        if (loading) {
+            enterBtn.disabled = true;
+            enterBtn.innerHTML = '<span class="loader"></span> Вход...';
+        } else {
+            enterBtn.disabled = false;
+            enterBtn.innerHTML = '🎮 Войти / Регистрация';
+        }
+    }
+    
+    async function enter() {
+        if (isSubmitting) return;
+        let nickname = nicknameInput.value.trim();
+        
+        if (!nickname) {
+            showMessage('❌ Введите ник');
+            return;
+        }
+        if (nickname.length < 2) {
+            showMessage('❌ Ник должен быть минимум 2 символа');
+            return;
+        }
+        if (nickname.length > 8) {
+            showMessage('❌ Ник не длиннее 8 символов');
+            return;
+        }
+        // Разрешены только буквы, цифры и нижнее подчёркивание
+        if (!/^[a-zA-Zа-яА-Я0-9_]+$/.test(nickname)) {
+            showMessage('❌ Только буквы, цифры и _');
+            return;
+        }
+        
+        isSubmitting = true;
+        setLoading(true);
+        
+        try {
+            // Пробуем сначала войти
+            let res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: nickname })
+            });
+            
+            let data = await res.json();
+            
+            if (res.ok && data.success) {
+                // Успешный вход
+                window.location.href = '/';
+                return;
+            }
+            
+            // Если вход не удался (пользователь не найден), пробуем зарегистрировать
+            if (data.error && data.error.includes('не найден')) {
+                res = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: nickname })
+                });
+                data = await res.json();
+                if (res.ok && data.success) {
+                    // Регистрация успешна — теперь войдём
+                    res = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: nickname })
+                    });
+                    data = await res.json();
+                    if (res.ok && data.success) {
+                        window.location.href = '/';
+                        return;
+                    } else {
+                        showMessage('❌ Ошибка при входе после регистрации');
+                    }
+                } else {
+                    showMessage(data.error || '❌ Ошибка регистрации');
+                }
+            } else {
+                showMessage(data.error || '❌ Ошибка входа');
+            }
+        } catch (err) {
+            console.error(err);
+            showMessage('❌ Сервер недоступен. Попробуйте позже.');
+        } finally {
+            setLoading(false);
+            isSubmitting = false;
+        }
+    }
+    
+    enterBtn.onclick = enter;
+    
+    nicknameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') enter();
+    });
+    
+    // Проверка, может уже залогинены?
+    (async function() {
+        try {
+            const res = await fetch('/api/me');
+            const data = await res.json();
+            if (data.authenticated) {
+                window.location.href = '/';
+            }
+        } catch(e) {}
+    })();
+</script>
+</body>
+</html>

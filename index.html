@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Pixel Battle Live</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="top-bar">
+        <div class="title">⚔️ PIXEL BATTLE ⚔️</div>
+        <div class="online-info">👥 Онлайн: <span id="onlineCount">0</span></div>
+        <div class="cooldown-area">
+            <div class="cooldown-text" id="cooldownText">✅ ГОТОВ</div>
+            <div class="cooldown-bar"><div id="cooldownFill" class="cooldown-fill"></div></div>
+        </div>
+    </div>
+
+    <div class="game-layout">
+        <canvas id="pixelCanvas" width="100" height="100" class="pixel-canvas"></canvas>
+        <div class="palette" id="palette"></div>
+    </div>
+
+    <div class="clan-panel">
+        <div id="myClanInfo"></div>
+        <div class="clan-actions">
+            <button id="createClanBtn">✨ Создать клан</button>
+            <button id="joinClanBtn">📩 Подать заявку</button>
+            <button id="leaveClanBtn">🚪 Покинуть клан</button>
+        </div>
+        <div id="clansListContainer" class="clans-list"></div>
+        <div id="requestsPanel" style="margin-top: 10px; background:#00000066; padding:8px; border-radius:16px;"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/client.js"></script>
+</body>
+</html>

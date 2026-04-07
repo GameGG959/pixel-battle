@@ -1,0 +1,161 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+}
+
+body {
+    background: #0a0f1a;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #11161fcc;
+    backdrop-filter: blur(8px);
+    padding: 10px 20px;
+    border-bottom: 1px solid #e67e2244;
+    z-index: 10;
+}
+
+.title {
+    font-size: 1.8rem;
+    font-weight: bold;
+    background: linear-gradient(135deg, #e67e22, #f39c12);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: 2px;
+}
+
+.online-info {
+    background: #2c3e50;
+    padding: 5px 15px;
+    border-radius: 40px;
+    font-weight: bold;
+}
+
+.cooldown-area {
+    width: 200px;
+    text-align: center;
+}
+
+.cooldown-text {
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+}
+
+.cooldown-bar {
+    width: 100%;
+    height: 6px;
+    background: #2c3e50;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.cooldown-fill {
+    width: 0%;
+    height: 100%;
+    background: #e67e22;
+    transition: width 0.1s linear;
+}
+
+.game-layout {
+    display: flex;
+    flex: 1;
+    gap: 20px;
+    padding: 20px;
+    overflow: auto;
+    justify-content: center;
+    align-items: center;
+}
+
+.pixel-canvas {
+    background: white;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+    cursor: crosshair;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    transition: transform 0.05s linear;
+    transform-origin: center;
+    max-width: 90vh;
+    max-height: 90vh;
+    width: auto;
+    height: auto;
+}
+
+.palette {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #11161faa;
+    backdrop-filter: blur(12px);
+    padding: 15px;
+    border-radius: 30px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.color-btn {
+    width: 55px;
+    height: 55px;
+    border-radius: 12px;
+    cursor: pointer;
+    border: 2px solid rgba(255,255,255,0.6);
+    transition: 0.1s;
+}
+
+.color-btn:hover {
+    transform: scale(1.05);
+    border-color: gold;
+}
+
+.color-btn.active {
+    border: 3px solid gold;
+    box-shadow: 0 0 12px gold;
+}
+
+.clan-panel {
+    background: #0f141ebb;
+    backdrop-filter: blur(10px);
+    border-top: 1px solid #e67e2244;
+    padding: 12px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85rem;
+}
+
+.clans-list {
+    max-height: 80px;
+    overflow-y: auto;
+    background: #00000055;
+    border-radius: 20px;
+    padding: 5px 12px;
+    flex: 1;
+}
+
+button {
+    background: #e67e22;
+    border: none;
+    padding: 6px 15px;
+    border-radius: 40px;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.1s;
+}
+
+button:hover {
+    background: #f39c12;
+    transform: scale(0.98);
+}
