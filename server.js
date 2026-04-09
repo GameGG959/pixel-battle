@@ -18,7 +18,6 @@ const COOLDOWN = 20000;     // 20 секунд
 // ========== БАЗА ДАННЫХ ==========
 const db = new sqlite3.Database('./pixelbattle.db');
 db.serialize(() => {
-    // Пользователи
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
@@ -27,7 +26,6 @@ db.serialize(() => {
         avatar_data TEXT DEFAULT '',
         bio TEXT DEFAULT ''
     )`);
-    // Кланы
     db.run(`CREATE TABLE IF NOT EXISTS clans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE,
@@ -46,7 +44,6 @@ db.serialize(() => {
         status TEXT,
         created_at INTEGER
     )`);
-    // Личные сообщения
     db.run(`CREATE TABLE IF NOT EXISTS private_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         from_user_id INTEGER,
@@ -55,17 +52,14 @@ db.serialize(() => {
         timestamp INTEGER,
         is_read INTEGER DEFAULT 0
     )`);
-    // Пиксели (сохранение холста)
+    // Новая таблица для сохранения пикселей
     db.run(`CREATE TABLE IF NOT EXISTS pixels (
         x INTEGER,
         y INTEGER,
         color TEXT,
         owner_id INTEGER,
-        owner_username TEXT,
-        owner_avatar TEXT,
         PRIMARY KEY (x, y)
     )`);
-    // Добавление колонок, если их нет (для совместимости)
     db.run(`ALTER TABLE users ADD COLUMN avatar_data TEXT DEFAULT ''`, () => {});
     db.run(`ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''`, () => {});
 });
@@ -74,22 +68,23 @@ db.serialize(() => {
 let grid = Array(SIZE).fill().map(() => Array(SIZE).fill('#FFFFFF'));
 let pixelOwners = Array(SIZE).fill().map(() => Array(SIZE).fill(null));
 
-// Загружаем сохранённые пиксели из БД
-db.all(`SELECT * FROM pixels`, (err, rows) => {
-    if (err) {
-        console.error('Ошибка загрузки пикселей:', err);
-        return;
+// Загружаем сохранённые пиксели
+db.all(`SELECT pixels.x, pixels.y, pixels.color, users.id as userId, users.username, users.avatar_data 
+        FROM pixels LEFT JOIN users ON pixels.owner_id = users.id`, (err, rows) => {
+    if (!err) {
+        rows.forEach(row => {
+            if (row.x >= 0 && row.x < SIZE && row.y >= 0 && row.y < SIZE) {
+                grid[row.x][row.y] = row.color;
+                if (row.userId) {
+                    pixelOwners[row.x][row.y] = {
+                        userId: row.userId,
+                        username: row.username,
+                        avatarData: row.avatar_data || ''
+                    };
+                }
+            }
+        });
     }
-    rows.forEach(row => {
-        if (row.x >= 0 && row.x < SIZE && row.y >= 0 && row.y < SIZE) {
-            grid[row.x][row.y] = row.color;
-            pixelOwners[row.x][row.y] = {
-                userId: row.owner_id,
-                username: row.owner_username,
-                avatarData: row.owner_avatar || ''
-            };
-        }
-    });
     console.log(`Загружено ${rows.length} пикселей из БД.`);
 });
 
@@ -262,17 +257,14 @@ io.on('connection', (socket) => {
         const { x, y, color } = data;
         if (x >= 0 && x < SIZE && y >= 0 && y < SIZE) {
             grid[x][y] = color;
-            const ownerInfo = { userId: socket.userId, username: socket.username, avatarData: socket.avatarData };
-            pixelOwners[x][y] = ownerInfo;
+            pixelOwners[x][y] = { userId: socket.userId, username: socket.username, avatarData: socket.avatarData };
             socket.lastPixel = now;
             
-            // Сохраняем пиксель в БД (перезаписываем, если уже был)
-            db.run(`INSERT OR REPLACE INTO pixels (x, y, color, owner_id, owner_username, owner_avatar) VALUES (?, ?, ?, ?, ?, ?)`,
-                [x, y, color, socket.userId, socket.username, socket.avatarData],
-                (err) => { if (err) console.error('Ошибка сохранения пикселя:', err); }
-            );
+            // Сохраняем в БД
+            db.run(`INSERT OR REPLACE INTO pixels (x, y, color, owner_id) VALUES (?, ?, ?, ?)`,
+                [x, y, color, socket.userId]);
             
-            io.emit('pixel', { x, y, color, owner: ownerInfo });
+            io.emit('pixel', { x, y, color, owner: { username: socket.username, userId: socket.userId, avatarData: socket.avatarData } });
         }
     });
 
@@ -346,12 +338,12 @@ io.on('connection', (socket) => {
     });
 });
 
-// ========== ГЕНЕРАЦИЯ HTML (без изменений) ==========
+// ========== ГЕНЕРАЦИЯ HTML (клиентский скрипт) ==========
 const clientScript = `
     const canvas = document.getElementById('pixelCanvas');
     const ctx = canvas.getContext('2d');
     const SIZE = ${SIZE};
-    const CELL_SIZE = 11;   // 1023 / 93 = 11
+    const CELL_SIZE = 11;
     let grid = Array(SIZE).fill().map(() => Array(SIZE).fill('#FFFFFF'));
     let pixelOwners = Array(SIZE).fill().map(() => Array(SIZE).fill(null));
     let selectedColor = '#FF0055';
@@ -363,7 +355,6 @@ const clientScript = `
     let dragStart = { x: 0, y: 0 };
     const wrapper = document.getElementById('canvasWrapper');
 
-    // Палитра 200+ цветов
     const allColors = (() => {
         const base = ['#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#FFA500','#FFFFFF','#000000','#888888','#800080','#008080','#FF6347','#40E0D0','#EE82EE','#F5DEB3','#7CFC00','#DC143C','#00CED1','#8A2BE2'];
         const colors = [...base];
@@ -405,7 +396,6 @@ const clientScript = `
     document.getElementById('selectedColorBtn').onclick = (e) => {
         e.stopPropagation();
         const popup = document.getElementById('palettePopup');
-        // Позиционируем попап прямо над кнопкой
         const btnRect = e.target.getBoundingClientRect();
         popup.style.left = btnRect.left + 'px';
         popup.style.top = (btnRect.top - popup.offsetHeight - 8) + 'px';
@@ -483,7 +473,9 @@ const clientScript = `
 
     function onCanvasClick(e) {
         const cell = screenToCell(e.clientX, e.clientY);
-        if(cell) socket.emit('pixel', { x: cell.x, y: cell.y, color: selectedColor });
+        if(cell) {
+            socket.emit('pixel', { x: cell.x, y: cell.y, color: selectedColor });
+        }
     }
 
     let tooltipDiv = null;
@@ -548,6 +540,7 @@ const clientScript = `
         socket.emit('privateMessage', { toUsername: currentDMUser, message: msg });
         addChatMessage('Вы', msg, true);
         input.value = '';
+        input.focus();
     };
 
     function setDMUser(username) {
@@ -651,11 +644,10 @@ const clientScript = `
 function generateGameHTML() {
     return `<!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>PIXEL • Pixel Battle</title>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pixel Battle</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',sans-serif;}
 body{background:#f5f7fa;display:flex;height:100vh;overflow:hidden;}
-/* САЙДБАР */
 .sidebar{width:340px;background:#fff;display:flex;flex-direction:column;border-right:1px solid #e0e0e0;box-shadow:2px 0 12px rgba(0,0,0,0.02);}
 .logo{padding:24px 20px;font-size:24px;font-weight:700;color:#1a1a1a;border-bottom:1px solid #eee;}
 .nav{display:flex;padding:12px;gap:8px;}
@@ -663,7 +655,6 @@ body{background:#f5f7fa;display:flex;height:100vh;overflow:hidden;}
 .nav-btn.active{background:#1a1a1a;color:#fff;}
 .content{flex:1;overflow-y:auto;padding:20px;}
 .tab-pane{display:flex;flex-direction:column;gap:20px;}
-/* ИНСТРУМЕНТЫ */
 .toolbar{display:flex;align-items:center;gap:16px;margin-bottom:16px;position:relative;}
 .color-btn{width:64px;height:64px;border-radius:18px;border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.08);cursor:pointer;transition:0.1s;}
 .color-btn:hover{transform:scale(1.02);}
@@ -674,7 +665,6 @@ body{background:#f5f7fa;display:flex;height:100vh;overflow:hidden;}
 .palette-swatch.active{border-color:#1a1a1a;box-shadow:0 0 0 2px #1a1a1a;}
 .cooldown-bar{background:#e9ecef;height:10px;border-radius:10px;margin:12px 0;}
 .cooldown-fill{height:100%;width:0;background:#1a1a1a;border-radius:10px;transition:width 0.2s;}
-/* ЧАТ */
 .chat-header{font-weight:700;margin-bottom:16px;font-size:1.1rem;}
 .chat-messages{flex:1;background:#fafafa;border-radius:20px;padding:16px;overflow-y:auto;min-height:280px;max-height:400px;}
 .chat-message{margin:8px 0;padding:10px 16px;background:#fff;border-radius:18px;max-width:85%;word-break:break-word;box-shadow:0 1px 2px rgba(0,0,0,0.03);}
@@ -683,19 +673,15 @@ body{background:#f5f7fa;display:flex;height:100vh;overflow:hidden;}
 .chat-input-area{display:flex;gap:10px;margin-top:16px;}
 .chat-input-area input{flex:1;padding:14px 16px;border:1px solid #ddd;border-radius:30px;font-size:0.95rem;}
 .chat-input-area button{background:#1a1a1a;color:#fff;border:none;padding:0 24px;border-radius:30px;font-weight:600;cursor:pointer;}
-/* ЮЗЕРЫ */
 .user-item{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fafafa;border-radius:16px;margin:6px 0;cursor:pointer;transition:0.1s;}
 .user-item:hover{background:#f0f0f0;}
 .user-avatar{width:40px;height:40px;border-radius:50%;background:#ddd;background-size:cover;}
-/* КЛАНЫ */
 .clan-item{display:flex;justify-content:space-between;align-items:center;padding:16px;background:#fafafa;border-radius:18px;margin:8px 0;border-left:6px solid;}
 .clan-item button{background:#1a1a1a;color:#fff;border:none;padding:8px 16px;border-radius:30px;cursor:pointer;}
-/* ПРОФИЛЬ */
 .profile-avatar{width:100px;height:100px;border-radius:50%;object-fit:cover;margin:0 auto 20px;display:block;border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.05);}
 .profile-input{width:100%;padding:14px;border:1px solid #ddd;border-radius:30px;margin:10px 0;font-size:0.95rem;}
 .profile-btn{width:100%;padding:14px;border:none;border-radius:30px;background:#1a1a1a;color:#fff;font-weight:600;margin:8px 0;cursor:pointer;}
 .profile-btn.secondary{background:#f0f0f0;color:#1a1a1a;}
-/* ХОЛСТ */
 .canvas-area{flex:1;position:relative;background:#e9ecef;overflow:hidden;display:flex;align-items:center;justify-content:center;}
 .canvas-wrapper{transform-origin:0 0;box-shadow:0 12px 30px rgba(0,0,0,0.15);border-radius:4px;}
 canvas{display:block;image-rendering:crisp-edges;image-rendering:pixelated;border-radius:4px;}
@@ -705,7 +691,6 @@ canvas{display:block;image-rendering:crisp-edges;image-rendering:pixelated;borde
 .zoom-controls{position:absolute;bottom:24px;right:24px;background:#fff;padding:8px 16px;border-radius:60px;box-shadow:0 4px 12px rgba(0,0,0,0.05);display:flex;gap:12px;}
 .zoom-btn{background:none;border:none;font-size:22px;font-weight:600;cursor:pointer;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#1a1a1a;}
 .zoom-btn:hover{background:#f0f0f0;}
-/* ТУЛТИП */
 .pixel-tooltip{position:fixed;background:#fff;border-radius:30px;padding:12px 18px;box-shadow:0 12px 28px rgba(0,0,0,0.12);display:flex;align-items:center;gap:14px;z-index:1000;border:1px solid #eee;}
 .tooltip-avatar{width:42px;height:42px;border-radius:50%;background-size:cover;}
 .tooltip-write{background:#1a1a1a;color:#fff;border:none;padding:8px 18px;border-radius:30px;font-weight:500;cursor:pointer;}
@@ -781,7 +766,7 @@ canvas{display:block;image-rendering:crisp-edges;image-rendering:pixelated;borde
 }
 
 function generateLoginHTML() {
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PIXEL • Вход</title>
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pixel Battle · Вход</title>
 <style>body{background:#f5f7fa;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;}.box{background:#fff;padding:40px;border-radius:40px;width:360px;box-shadow:0 20px 40px rgba(0,0,0,0.05);}input{width:100%;padding:16px;margin:12px 0;border:1px solid #ddd;border-radius:30px;font-size:1rem;}button{width:100%;padding:16px;border:none;border-radius:30px;background:#1a1a1a;color:#fff;font-weight:600;margin:10px 0;cursor:pointer;}.error{color:#e74c3c;margin-top:10px;}</style>
 </head><body><div class="box"><h1 style="margin-bottom:20px;">PIXEL BATTLE</h1><div id="error" class="error"></div>
 <input id="username" placeholder="Логин"><input id="password" type="password" placeholder="Пароль">
@@ -793,9 +778,6 @@ async function register(){const u=username.value,p=password.value;const r=await 
 }
 
 server.listen(PORT, () => {
-    console.log(`\n╔══════════════════════════════════════════╗`);
-    console.log(`║        PIXEL BATTLE v2.0 (SAVE)         ║`);
-    console.log(`║        http://localhost:${PORT}           ║`);
-    console.log(`║    Холст 1023x1023 | Сохранение в БД     ║`);
-    console.log(`╚══════════════════════════════════════════╝\n`);
+    console.log(`\n✅ Pixel Battle запущен: http://localhost:${PORT}`);
+    console.log(`📦 Холст 1023x1023, сохранение в БД активно.\n`);
 });
