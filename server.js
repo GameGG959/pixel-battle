@@ -11,9 +11,9 @@ const io = socketIo(server);
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 
-const PORT = 3211;
-const SIZE = 100;          // 100×100 пикселей
-const COOLDOWN = 20000;    // 20 секунд
+const PORT = 3269;
+const SIZE = 93;            // 93×93 клетки → холст 1023×1023
+const COOLDOWN = 20000;     // 20 секунд
 
 // ========== БАЗА ДАННЫХ ==========
 const db = new sqlite3.Database('./pixelbattle.db');
@@ -303,15 +303,15 @@ io.on('connection', (socket) => {
     });
 });
 
-// ========== ГЕНЕРАЦИЯ HTML (клиентский скрипт вынесен в строку) ==========
+// ========== ГЕНЕРАЦИЯ HTML (NOWKIE STYLE – ИСПРАВЛЕНО) ==========
 const clientScript = `
     const canvas = document.getElementById('pixelCanvas');
     const ctx = canvas.getContext('2d');
     const SIZE = ${SIZE};
-    const CELL_SIZE = 10;
+    const CELL_SIZE = 11;   // 1023 / 93 = 11
     let grid = Array(SIZE).fill().map(() => Array(SIZE).fill('#FFFFFF'));
     let pixelOwners = Array(SIZE).fill().map(() => Array(SIZE).fill(null));
-    let selectedColor = '#FF0000';
+    let selectedColor = '#FF0055';
     let socket = io();
     let currentDMUser = null;
     let scale = 1;
@@ -320,47 +320,66 @@ const clientScript = `
     let dragStart = { x: 0, y: 0 };
     const wrapper = document.getElementById('canvasWrapper');
 
-    function generateMegaPalette() {
-        const colors = [];
-        const basic = ['#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#FFA500','#FFFFFF','#000000','#888888','#800080','#008080','#FF6347','#40E0D0','#EE82EE','#F5DEB3','#7CFC00','#DC143C','#00CED1','#8A2BE2'];
-        basic.forEach(c => colors.push(c));
-        for(let h=0; h<360; h+=15) {
+    // Палитра 200+ цветов
+    const allColors = (() => {
+        const base = ['#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#FFA500','#FFFFFF','#000000','#888888','#800080','#008080','#FF6347','#40E0D0','#EE82EE','#F5DEB3','#7CFC00','#DC143C','#00CED1','#8A2BE2'];
+        const colors = [...base];
+        for(let h=0; h<360; h+=12) {
             for(let s=30; s<=100; s+=35) {
                 for(let l=35; l<=75; l+=20) {
-                    let col = "hsl("+h+","+s+"%,"+l+"%)";
-                    if(!colors.includes(col)) colors.push(col);
+                    colors.push("hsl("+h+","+s+"%,"+l+"%)");
                 }
             }
         }
         for(let g=10; g<=240; g+=15) colors.push("rgb("+g+","+g+","+g+")");
-        return colors;
-    }
-    const allColors = generateMegaPalette();
+        return [...new Set(colors)];
+    })();
 
     function buildColorPaletteUI() {
-        const container = document.getElementById('colorPaletteGrid');
-        container.innerHTML = '';
+        const gridDiv = document.getElementById('colorPaletteGrid');
+        gridDiv.innerHTML = '';
         allColors.forEach(c => {
             const swatch = document.createElement('div');
             swatch.className = 'palette-swatch';
             swatch.style.backgroundColor = c;
-            swatch.onclick = () => {
+            swatch.onclick = (e) => {
+                e.stopPropagation();
                 selectedColor = c;
+                document.getElementById('selectedColorBtn').style.backgroundColor = c;
                 document.querySelectorAll('.palette-swatch').forEach(el => el.classList.remove('active'));
                 swatch.classList.add('active');
+                closePalette();
             };
-            if(c === selectedColor) swatch.classList.add('active');
-            container.appendChild(swatch);
+            gridDiv.appendChild(swatch);
         });
+        document.getElementById('selectedColorBtn').style.backgroundColor = selectedColor;
     }
+
+    function closePalette() {
+        document.getElementById('palettePopup').classList.remove('show');
+    }
+
+    document.getElementById('selectedColorBtn').onclick = (e) => {
+        e.stopPropagation();
+        const popup = document.getElementById('palettePopup');
+        // Позиционируем попап прямо над кнопкой
+        const btnRect = e.target.getBoundingClientRect();
+        popup.style.left = btnRect.left + 'px';
+        popup.style.top = (btnRect.top - popup.offsetHeight - 8) + 'px';
+        popup.classList.toggle('show');
+    };
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#palettePopup') && !e.target.closest('#selectedColorBtn')) {
+            closePalette();
+        }
+    });
+    window.addEventListener('resize', closePalette);
 
     function drawGridFull() {
         for(let i=0; i<SIZE; i++) {
             for(let j=0; j<SIZE; j++) {
                 ctx.fillStyle = grid[i][j];
                 ctx.fillRect(j*CELL_SIZE, i*CELL_SIZE, CELL_SIZE, CELL_SIZE);
-                ctx.strokeStyle = '#1a1a2e';
-                ctx.strokeRect(j*CELL_SIZE, i*CELL_SIZE, CELL_SIZE, CELL_SIZE);
             }
         }
         applyTransform();
@@ -421,9 +440,7 @@ const clientScript = `
 
     function onCanvasClick(e) {
         const cell = screenToCell(e.clientX, e.clientY);
-        if(cell) {
-            socket.emit('pixel', { x: cell.x, y: cell.y, color: selectedColor });
-        }
+        if(cell) socket.emit('pixel', { x: cell.x, y: cell.y, color: selectedColor });
     }
 
     let tooltipDiv = null;
@@ -437,24 +454,15 @@ const clientScript = `
                     tooltipDiv.className = 'pixel-tooltip';
                     document.body.appendChild(tooltipDiv);
                 }
-                tooltipDiv.innerHTML = '<div style=\"width:28px;height:28px;border-radius:50%;background:url(\\'' + (owner.avatarData||'') + '\\') center/cover;\"></div>' +
-                                        '<div><strong>' + escapeHtml(owner.username) + '</strong><br>(' + cell.x + ',' + cell.y + ')</div>' +
-                                        '<button class=\"writeBtn\" data-username=\"' + escapeHtml(owner.username) + '\" style=\"background:#ff3300;border:none;border-radius:20px;padding:2px 8px;\">💬</button>';
-                tooltipDiv.style.position = 'fixed';
-                tooltipDiv.style.left = (e.clientX + 15) + 'px';
+                tooltipDiv.innerHTML = '<div class="tooltip-avatar" style="background-image:url(\\'' + (owner.avatarData||'') + '\\')"></div>' +
+                                        '<div class="tooltip-info"><strong>' + escapeHtml(owner.username) + '</strong><br>(' + cell.x + ',' + cell.y + ')</div>' +
+                                        '<button class="tooltip-write" data-username="' + escapeHtml(owner.username) + '">💬</button>';
+                tooltipDiv.style.left = (e.clientX + 20) + 'px';
                 tooltipDiv.style.top = (e.clientY - 40) + 'px';
-                tooltipDiv.style.background = '#1e1a2f';
-                tooltipDiv.style.padding = '8px';
-                tooltipDiv.style.borderRadius = '20px';
-                tooltipDiv.style.borderLeft = '4px solid #ff3300';
                 tooltipDiv.style.display = 'flex';
-                tooltipDiv.style.gap = '8px';
-                tooltipDiv.style.zIndex = 9999;
-                const btn = tooltipDiv.querySelector('.writeBtn');
-                btn.onclick = (ev) => {
+                tooltipDiv.querySelector('.tooltip-write').onclick = (ev) => {
                     ev.stopPropagation();
-                    const username = btn.getAttribute('data-username');
-                    setDMUser(username);
+                    setDMUser(ev.target.dataset.username);
                     showTab('chat');
                 };
                 return;
@@ -463,153 +471,126 @@ const clientScript = `
         if(tooltipDiv) tooltipDiv.style.display = 'none';
     }
 
-    function escapeHtml(str) { return str.replace(/[&<>]/g, function(m){if(m==='&')return '&amp;';if(m==='<')return '&lt;';return '&gt;';}); }
+    function escapeHtml(s) { return s.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[m]); }
 
-    socket.on('initGrid', (data) => {
-        grid = data.grid;
-        pixelOwners = data.pixelOwners;
-        drawGridFull();
-    });
-    socket.on('pixel', (data) => {
-        grid[data.x][data.y] = data.color;
-        pixelOwners[data.x][data.y] = data.owner;
-        drawGridFull();
-    });
+    socket.on('initGrid', (data) => { grid = data.grid; pixelOwners = data.pixelOwners; drawGridFull(); });
+    socket.on('pixel', (data) => { grid[data.x][data.y] = data.color; pixelOwners[data.x][data.y] = data.owner; drawGridFull(); });
     socket.on('updateOnline', (count) => { document.getElementById('onlineCount').innerText = count; });
     socket.on('cooldown', (sec) => {
         let remaining = sec;
         const fillDiv = document.getElementById('cooldownFill');
         const textSpan = document.getElementById('cooldownText');
         const interval = setInterval(() => {
-            if(remaining <= 0) {
-                textSpan.innerText = '✅ ГОТОВ';
-                fillDiv.style.width = '0%';
-                clearInterval(interval);
-            } else {
-                textSpan.innerText = '⏳ ' + remaining + ' сек';
-                fillDiv.style.width = ((sec-remaining)/sec*100) + '%';
-                remaining--;
-            }
+            if(remaining <= 0) { textSpan.innerText = '✅'; fillDiv.style.width = '0%'; clearInterval(interval); }
+            else { textSpan.innerText = remaining + 'с'; fillDiv.style.width = ((sec-remaining)/sec*100) + '%'; remaining--; }
         }, 1000);
     });
 
-    socket.on('privateMessage', (data) => {
-        addChatMessage('💬 [ЛС] ' + data.from + ': ' + data.message);
-    });
-    socket.on('privateMessageSent', (data) => {
-        addChatMessage('✉️ Вы -> ' + data.to + ': ' + data.message, true);
-    });
+    socket.on('privateMessage', (data) => { addChatMessage(data.from, data.message, false); });
+    socket.on('privateMessageSent', (data) => { addChatMessage('Вы', data.message, true); });
 
-    function addChatMessage(text, isOwn=false) {
-        const container = document.getElementById('chatMessagesList');
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message-item';
-        msgDiv.style.color = isOwn ? '#ffaa66' : '#ccc';
-        msgDiv.innerText = text;
-        container.appendChild(msgDiv);
+    function addChatMessage(sender, text, isOwn) {
+        const container = document.getElementById('chatMessages');
+        const div = document.createElement('div');
+        div.className = 'chat-message ' + (isOwn ? 'own' : '');
+        div.innerHTML = '<span class="msg-sender">' + escapeHtml(sender) + '</span> ' + escapeHtml(text);
+        container.appendChild(div);
         container.scrollTop = container.scrollHeight;
     }
 
-    document.getElementById('chatInput').addEventListener('keypress', (e) => {
-        if(e.key === 'Enter') {
-            const msg = e.target.value.trim();
-            if(!msg) return;
-            if(currentDMUser) {
-                socket.emit('privateMessage', { toUsername: currentDMUser, message: msg });
-                addChatMessage('✉️ Вы -> ' + currentDMUser + ': ' + msg, true);
-            } else {
-                addChatMessage('💬 Вы: ' + msg, true);
-            }
-            e.target.value = '';
-        }
-    });
+    document.getElementById('sendMsgBtn').onclick = () => {
+        const input = document.getElementById('chatInput');
+        const msg = input.value.trim();
+        if(!msg || !currentDMUser) return;
+        socket.emit('privateMessage', { toUsername: currentDMUser, message: msg });
+        addChatMessage('Вы', msg, true);
+        input.value = '';
+    };
 
     function setDMUser(username) {
         currentDMUser = username;
-        document.getElementById('dmTargetDisplay').innerHTML = currentDMUser ? '💬 ЛС с ' + currentDMUser + ' <span style=\"color:#ff3300;cursor:pointer;\" onclick=\"setDMUser(null)\">[X]</span>' : '⚡ Личный чат ни с кем';
+        document.getElementById('chatHeader').innerHTML = '💬 ' + (username || 'Выберите собеседника');
+        if(username) loadMessages(username);
+    }
+
+    async function loadMessages(username) {
+        const res = await fetch('/api/allUsers');
+        const users = await res.json();
+        const user = users.find(u => u.username === username);
+        if(!user) return;
+        const msgRes = await fetch('/api/messages/' + user.id);
+        const msgs = await msgRes.json();
+        const container = document.getElementById('chatMessages');
+        container.innerHTML = '';
+        const myUsername = (await (await fetch('/api/profile/me')).json()).username;
+        msgs.forEach(m => addChatMessage(m.from_username, m.message, m.from_username === myUsername));
     }
 
     async function loadUsersList() {
         const res = await fetch('/api/allUsers');
         const users = await res.json();
-        const container = document.getElementById('usersListContainer');
+        const container = document.getElementById('usersList');
         container.innerHTML = '';
         users.forEach(u => {
             const div = document.createElement('div');
             div.className = 'user-item';
-            div.innerHTML = '<div class=\"avatar-mini\" style=\"background-image:url(\\'' + (u.avatar_data||'') + '\\'); background-size:cover;\"></div>' + escapeHtml(u.username);
-            div.onclick = () => { setDMUser(u.username); addChatMessage('💬 Начат приват с ' + u.username, false, true); showTab('chat'); };
+            div.innerHTML = '<div class="user-avatar" style="background-image:url(' + (u.avatar_data||'') + ')"></div><span>' + escapeHtml(u.username) + '</span>';
+            div.onclick = () => setDMUser(u.username);
             container.appendChild(div);
         });
     }
 
     socket.on('clansList', (clans) => {
-        const container = document.getElementById('allClansList');
-        if(!clans.length) { container.innerHTML = 'Нет кланов'; return; }
+        const container = document.getElementById('clansList');
         container.innerHTML = '';
         clans.forEach(c => {
-            const btn = document.createElement('button');
-            btn.style.background = c.color;
-            btn.style.margin = '5px';
-            btn.innerText = c.name + ' (' + c.members_count + ')';
-            btn.onclick = () => socket.emit('joinClanRequest', c.id);
-            container.appendChild(btn);
+            const div = document.createElement('div');
+            div.className = 'clan-item';
+            div.style.borderLeftColor = c.color;
+            div.innerHTML = '<span>' + escapeHtml(c.name) + ' (' + c.members_count + ')</span><button>Вступить</button>';
+            div.querySelector('button').onclick = () => socket.emit('joinClanRequest', c.id);
+            container.appendChild(div);
         });
     });
     socket.on('myClan', (clan) => {
-        const block = document.getElementById('myClanBlock');
-        if(clan) block.innerHTML = '🏰 Ваш клан: <span style=\"color:' + clan.color + '\">' + clan.name + '</span> (' + clan.role + ')';
-        else block.innerHTML = '🏰 Вы не в клане';
+        const block = document.getElementById('myClanInfo');
+        if(clan) block.innerHTML = '🏰 ' + escapeHtml(clan.name) + ' (' + clan.role + ')';
+        else block.innerHTML = '🏰 Не в клане';
     });
-    document.getElementById('createClanButton').onclick = () => {
+
+    document.getElementById('createClanBtn').onclick = () => {
         const name = prompt('Название клана:');
-        const color = prompt('Цвет HEX:');
+        const color = prompt('Цвет (HEX):');
         if(name && color) socket.emit('createClan', { name, color });
     };
-    document.getElementById('leaveClanButton').onclick = () => { if(confirm('Покинуть клан?')) socket.emit('leaveClan'); };
+    document.getElementById('leaveClanBtn').onclick = () => { if(confirm('Покинуть клан?')) socket.emit('leaveClan'); };
 
-    async function loadMyProfile() {
+    async function loadProfile() {
         const res = await fetch('/api/profile/me');
         const me = await res.json();
         document.getElementById('profileAvatar').src = me.avatar_data || 'https://via.placeholder.com/80';
-        document.getElementById('avatarUrlInput').value = me.avatar_data || '';
-        document.getElementById('profileBioInput').value = me.bio || '';
+        document.getElementById('avatarUrl').value = me.avatar_data || '';
+        document.getElementById('profileBio').value = me.bio || '';
     }
-    document.getElementById('saveProfileButton').onclick = async () => {
-        const avatar_data = document.getElementById('avatarUrlInput').value;
-        const bio = document.getElementById('profileBioInput').value;
-        await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ avatar_data, bio }) });
+    document.getElementById('saveProfileBtn').onclick = async () => {
+        await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ avatar_data: document.getElementById('avatarUrl').value, bio: document.getElementById('profileBio').value }) });
         alert('Сохранено');
-        loadMyProfile();
     };
-    document.getElementById('logoutButton').onclick = () => { document.cookie = 'userId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'; location.href='/login'; };
+    document.getElementById('logoutBtn').onclick = () => { document.cookie = 'userId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'; location.href='/login'; };
 
-    function showTab(tabName) {
-        document.querySelectorAll('.tab-pane').forEach(pane => pane.style.display = 'none');
-        document.getElementById(tabName + 'Tab').style.display = 'flex';
-        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-        document.querySelector('.tab-btn[data-tab=\"' + tabName + '\"]').classList.add('active');
-        if(tabName === 'chat') loadUsersList();
-        if(tabName === 'profile') loadMyProfile();
+    function showTab(tabId) {
+        document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+        document.getElementById(tabId).style.display = 'flex';
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.nav-btn[data-tab="' + tabId + '"]').classList.add('active');
+        if(tabId === 'chat') { loadUsersList(); setDMUser(null); }
+        if(tabId === 'profile') loadProfile();
     }
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.onclick = () => showTab(btn.getAttribute('data-tab'));
-    });
+    document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
-    document.getElementById('zoomInBtn').onclick = () => {
-        scale = Math.min(8, scale * 1.2);
-        applyTransform();
-    };
-    document.getElementById('zoomOutBtn').onclick = () => {
-        scale = Math.max(0.5, scale / 1.2);
-        applyTransform();
-    };
-    document.getElementById('resetViewBtn').onclick = () => {
-        scale = 1;
-        translateX = 0;
-        translateY = 0;
-        applyTransform();
-    };
+    document.getElementById('zoomIn').onclick = () => { scale = Math.min(8, scale*1.2); applyTransform(); };
+    document.getElementById('zoomOut').onclick = () => { scale = Math.max(0.5, scale/1.2); applyTransform(); };
+    document.getElementById('resetView').onclick = () => { scale=1; translateX=0; translateY=0; applyTransform(); };
 
     wrapper.addEventListener('wheel', handleWheel, { passive: false });
     wrapper.addEventListener('mousedown', onMouseDown);
@@ -622,323 +603,132 @@ const clientScript = `
     buildColorPaletteUI();
     drawGridFull();
     showTab('battle');
-    setInterval(() => { if(document.querySelector('.tab-btn.active').getAttribute('data-tab') === 'chat') loadUsersList(); }, 10000);
 `;
 
 function generateGameHTML() {
     return `<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>PIXEL BATTLE — HARDCORE EDITION</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            user-select: none;
-        }
-        body {
-            background: radial-gradient(circle at 20% 30%, #0a050f, #000000);
-            font-family: 'Segoe UI', 'Orbitron', 'Impact', system-ui;
-            color: #eee;
-            overflow: hidden;
-            height: 100vh;
-            width: 100vw;
-        }
-        .app {
-            display: flex;
-            height: 100%;
-            width: 100%;
-        }
-        .canvas-area {
-            flex: 1;
-            position: relative;
-            background: #00000066;
-            backdrop-filter: blur(4px);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            overflow: hidden;
-            border-right: 3px solid #ff3300;
-            box-shadow: 0 0 20px rgba(255, 51, 0, 0.3);
-        }
-        .canvas-wrapper {
-            position: relative;
-            cursor: grab;
-            transform-origin: 0 0;
-        }
-        .canvas-wrapper:active {
-            cursor: grabbing;
-        }
-        canvas {
-            display: block;
-            box-shadow: 0 0 40px rgba(255, 68, 0, 0.5);
-            border-radius: 0px;
-            image-rendering: crisp-edges;
-            image-rendering: pixelated;
-        }
-        .zoom-controls {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            background: #1e1a2fcc;
-            backdrop-filter: blur(8px);
-            padding: 8px 12px;
-            border-radius: 40px;
-            display: flex;
-            gap: 12px;
-            z-index: 50;
-            border: 1px solid #ff4400;
-        }
-        .zoom-btn {
-            background: #ff3300;
-            border: none;
-            font-size: 20px;
-            font-weight: bold;
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            color: white;
-            cursor: pointer;
-            transition: 0.1s linear;
-        }
-        .zoom-btn:hover {
-            background: #ff6600;
-            transform: scale(1.05);
-        }
-        .right-panel {
-            width: 360px;
-            background: rgba(10, 5, 20, 0.9);
-            backdrop-filter: blur(16px);
-            display: flex;
-            flex-direction: column;
-            border-left: 2px solid #ff3300;
-            box-shadow: -10px 0 30px rgba(0,0,0,0.8);
-        }
-        .panel-header {
-            background: #ff3300;
-            padding: 12px;
-            text-align: center;
-            font-weight: 900;
-            font-size: 1.3rem;
-            letter-spacing: 2px;
-            text-shadow: 0 0 5px black;
-            clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%);
-        }
-        .tab-strip {
-            display: flex;
-            background: #1a1124;
-            border-bottom: 2px solid #ff3300;
-        }
-        .tab-btn {
-            flex: 1;
-            text-align: center;
-            padding: 12px 0;
-            font-weight: bold;
-            background: #0a0510;
-            color: #aaa;
-            cursor: pointer;
-            transition: 0.1s;
-            font-size: 1.1rem;
-            border-right: 1px solid #ff330055;
-        }
-        .tab-btn.active {
-            background: #ff3300;
-            color: white;
-            text-shadow: 0 0 3px black;
-            box-shadow: inset 0 -2px 0 white;
-        }
-        .tab-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 15px;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-        .panel-section {
-            background: #0f0b18cc;
-            border-radius: 20px;
-            padding: 12px;
-            border: 1px solid #ff330055;
-        }
-        .color-palette-grid {
-            display: grid;
-            grid-template-columns: repeat(8, 1fr);
-            gap: 8px;
-            max-height: 240px;
-            overflow-y: auto;
-            padding: 5px;
-        }
-        .palette-swatch {
-            aspect-ratio: 1 / 1;
-            border-radius: 12px;
-            cursor: pointer;
-            border: 2px solid #2a2a2a;
-            transition: 0.05s linear;
-        }
-        .palette-swatch.active {
-            border: 3px solid white;
-            box-shadow: 0 0 12px cyan;
-            transform: scale(1.05);
-        }
-        .cooldown-bar-big {
-            background: #222;
-            height: 12px;
-            border-radius: 20px;
-            overflow: hidden;
-            margin: 10px 0;
-        }
-        .cooldown-fill-big {
-            width: 0%;
-            height: 100%;
-            background: linear-gradient(90deg, #ff3300, #ff8800);
-        }
-        .online-badge {
-            background: #00aa33;
-            padding: 5px 12px;
-            border-radius: 30px;
-            font-weight: bold;
-            text-align: center;
-        }
-        .chat-messages-list {
-            background: #00000066;
-            border-radius: 16px;
-            height: 220px;
-            overflow-y: auto;
-            padding: 8px;
-            font-size: 0.85rem;
-        }
-        .message-item {
-            margin: 6px 0;
-            border-bottom: 1px solid #ff330033;
-            padding: 4px;
-        }
-        .dm-target {
-            font-size: 0.7rem;
-            color: #ffaa00;
-            cursor: pointer;
-        }
-        button, .btn-style {
-            background: #ff3300;
-            border: none;
-            padding: 8px 12px;
-            border-radius: 40px;
-            font-weight: bold;
-            color: white;
-            cursor: pointer;
-            transition: 0.05s linear;
-        }
-        button:active {
-            transform: scale(0.96);
-        }
-        input, textarea {
-            background: #221c33;
-            border: 1px solid #ff3300;
-            padding: 8px;
-            border-radius: 20px;
-            color: white;
-            width: 100%;
-        }
-        .user-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px;
-            background: #1e172e;
-            margin: 6px 0;
-            border-radius: 40px;
-            cursor: pointer;
-        }
-        .avatar-mini {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background-size: cover;
-        }
-        ::-webkit-scrollbar {
-            width: 5px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #111;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #ff3300;
-        }
-    </style>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KRYTOY • Pixel Battle</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',sans-serif;}
+body{background:#f5f7fa;display:flex;height:100vh;overflow:hidden;}
+/* САЙДБАР */
+.sidebar{width:340px;background:#fff;display:flex;flex-direction:column;border-right:1px solid #e0e0e0;box-shadow:2px 0 12px rgba(0,0,0,0.02);}
+.logo{padding:24px 20px;font-size:24px;font-weight:700;color:#1a1a1a;border-bottom:1px solid #eee;}
+.nav{display:flex;padding:12px;gap:8px;}
+.nav-btn{flex:1;padding:12px;background:#f5f5f5;border:none;border-radius:14px;font-weight:600;cursor:pointer;color:#444;transition:0.15s;}
+.nav-btn.active{background:#1a1a1a;color:#fff;}
+.content{flex:1;overflow-y:auto;padding:20px;}
+.tab-pane{display:flex;flex-direction:column;gap:20px;}
+/* ИНСТРУМЕНТЫ */
+.toolbar{display:flex;align-items:center;gap:16px;margin-bottom:16px;position:relative;}
+.color-btn{width:64px;height:64px;border-radius:18px;border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.08);cursor:pointer;transition:0.1s;}
+.color-btn:hover{transform:scale(1.02);}
+.palette-popup{display:none;position:fixed;background:#fff;border-radius:24px;box-shadow:0 12px 30px rgba(0,0,0,0.12);padding:16px;z-index:200;width:320px;border:1px solid #eee;}
+.palette-popup.show{display:block;}
+.palette-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;max-height:280px;overflow-y:auto;}
+.palette-swatch{aspect-ratio:1;border-radius:12px;cursor:pointer;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.05);transition:0.1s;}
+.palette-swatch.active{border-color:#1a1a1a;box-shadow:0 0 0 2px #1a1a1a;}
+.cooldown-bar{background:#e9ecef;height:10px;border-radius:10px;margin:12px 0;}
+.cooldown-fill{height:100%;width:0;background:#1a1a1a;border-radius:10px;transition:width 0.2s;}
+/* ЧАТ */
+.chat-header{font-weight:700;margin-bottom:16px;font-size:1.1rem;}
+.chat-messages{flex:1;background:#fafafa;border-radius:20px;padding:16px;overflow-y:auto;min-height:280px;max-height:400px;}
+.chat-message{margin:8px 0;padding:10px 16px;background:#fff;border-radius:18px;max-width:85%;word-break:break-word;box-shadow:0 1px 2px rgba(0,0,0,0.03);}
+.chat-message.own{background:#1a1a1a;color:#fff;margin-left:auto;}
+.msg-sender{font-weight:700;margin-right:8px;}
+.chat-input-area{display:flex;gap:10px;margin-top:16px;}
+.chat-input-area input{flex:1;padding:14px 16px;border:1px solid #ddd;border-radius:30px;font-size:0.95rem;}
+.chat-input-area button{background:#1a1a1a;color:#fff;border:none;padding:0 24px;border-radius:30px;font-weight:600;cursor:pointer;}
+/* ЮЗЕРЫ */
+.user-item{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fafafa;border-radius:16px;margin:6px 0;cursor:pointer;transition:0.1s;}
+.user-item:hover{background:#f0f0f0;}
+.user-avatar{width:40px;height:40px;border-radius:50%;background:#ddd;background-size:cover;}
+/* КЛАНЫ */
+.clan-item{display:flex;justify-content:space-between;align-items:center;padding:16px;background:#fafafa;border-radius:18px;margin:8px 0;border-left:6px solid;}
+.clan-item button{background:#1a1a1a;color:#fff;border:none;padding:8px 16px;border-radius:30px;cursor:pointer;}
+/* ПРОФИЛЬ */
+.profile-avatar{width:100px;height:100px;border-radius:50%;object-fit:cover;margin:0 auto 20px;display:block;border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.05);}
+.profile-input{width:100%;padding:14px;border:1px solid #ddd;border-radius:30px;margin:10px 0;font-size:0.95rem;}
+.profile-btn{width:100%;padding:14px;border:none;border-radius:30px;background:#1a1a1a;color:#fff;font-weight:600;margin:8px 0;cursor:pointer;}
+.profile-btn.secondary{background:#f0f0f0;color:#1a1a1a;}
+/* ХОЛСТ */
+.canvas-area{flex:1;position:relative;background:#e9ecef;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+.canvas-wrapper{transform-origin:0 0;box-shadow:0 12px 30px rgba(0,0,0,0.15);border-radius:4px;}
+canvas{display:block;image-rendering:crisp-edges;image-rendering:pixelated;border-radius:4px;}
+.online-indicator{position:absolute;top:24px;left:24px;display:flex;align-items:center;gap:8px;background:#fff;padding:8px 18px;border-radius:60px;box-shadow:0 4px 12px rgba(0,0,0,0.05);}
+.pulse{width:12px;height:12px;background:#2ecc71;border-radius:50%;animation:pulse 1.8s infinite;}
+@keyframes pulse{0%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.15)}100%{opacity:1;transform:scale(1)}}
+.zoom-controls{position:absolute;bottom:24px;right:24px;background:#fff;padding:8px 16px;border-radius:60px;box-shadow:0 4px 12px rgba(0,0,0,0.05);display:flex;gap:12px;}
+.zoom-btn{background:none;border:none;font-size:22px;font-weight:600;cursor:pointer;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#1a1a1a;}
+.zoom-btn:hover{background:#f0f0f0;}
+/* ТУЛТИП */
+.pixel-tooltip{position:fixed;background:#fff;border-radius:30px;padding:12px 18px;box-shadow:0 12px 28px rgba(0,0,0,0.12);display:flex;align-items:center;gap:14px;z-index:1000;border:1px solid #eee;}
+.tooltip-avatar{width:42px;height:42px;border-radius:50%;background-size:cover;}
+.tooltip-write{background:#1a1a1a;color:#fff;border:none;padding:8px 18px;border-radius:30px;font-weight:500;cursor:pointer;}
+</style>
 </head>
 <body>
-<div class="app">
-    <div class="canvas-area">
-        <div class="canvas-wrapper" id="canvasWrapper">
-            <canvas id="pixelCanvas" width="1000" height="1000"></canvas>
+<div class="sidebar">
+    <div class="logo">PIXEL BATTLE</div>
+    <div class="nav">
+        <button class="nav-btn active" data-tab="battle">🎨 Битва</button>
+        <button class="nav-btn" data-tab="chat">💬 Чат</button>
+        <button class="nav-btn" data-tab="clans">🏰 Кланы</button>
+        <button class="nav-btn" data-tab="profile">👤 Профиль</button>
+    </div>
+    <div class="content">
+        <div id="battle" class="tab-pane">
+            <div class="toolbar">
+                <div id="selectedColorBtn" class="color-btn"></div>
+                <span style="color:#555;font-weight:500;">Выберите цвет</span>
+            </div>
+            <div id="palettePopup" class="palette-popup">
+                <div id="colorPaletteGrid" class="palette-grid"></div>
+            </div>
+            <div class="cooldown-bar"><div id="cooldownFill" class="cooldown-fill"></div></div>
+            <div id="cooldownText" style="text-align:center;font-weight:500;">✅ Готов</div>
+            <div style="margin-top:12px;color:#777;font-size:0.85rem;">Колёсико — зум, зажать ЛКМ — двигать</div>
         </div>
-        <div class="zoom-controls">
-            <button class="zoom-btn" id="zoomOutBtn">−</button>
-            <span id="zoomLevel" style="color:white; font-weight:bold;">100%</span>
-            <button class="zoom-btn" id="zoomInBtn">+</button>
-            <button class="zoom-btn" id="resetViewBtn">⟳</button>
+        <div id="chat" class="tab-pane" style="display:none;">
+            <div id="chatHeader" class="chat-header">💬 Выберите собеседника</div>
+            <div id="chatMessages" class="chat-messages"></div>
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Сообщение...">
+                <button id="sendMsgBtn">➤</button>
+            </div>
+            <div style="margin-top:24px;"><strong>👥 Пользователи</strong></div>
+            <div id="usersList" style="max-height:220px;overflow-y:auto;"></div>
+        </div>
+        <div id="clans" class="tab-pane" style="display:none;">
+            <div id="myClanInfo" style="padding:16px;background:#fafafa;border-radius:18px;margin-bottom:16px;">🏰 Не в клане</div>
+            <button id="createClanBtn" style="width:100%;padding:14px;border:none;border-radius:30px;background:#1a1a1a;color:#fff;font-weight:600;margin-bottom:10px;cursor:pointer;">➕ Создать клан</button>
+            <button id="leaveClanBtn" style="width:100%;padding:14px;border:none;border-radius:30px;background:#f0f0f0;color:#1a1a1a;font-weight:600;cursor:pointer;">🚪 Покинуть клан</button>
+            <div style="margin-top:24px;"><strong>🌍 Все кланы</strong></div>
+            <div id="clansList"></div>
+        </div>
+        <div id="profile" class="tab-pane" style="display:none;">
+            <img id="profileAvatar" class="profile-avatar" src="" alt="аватар">
+            <input id="avatarUrl" class="profile-input" placeholder="Ссылка на аватар">
+            <textarea id="profileBio" class="profile-input" rows="3" placeholder="О себе..."></textarea>
+            <button id="saveProfileBtn" class="profile-btn">💾 Сохранить</button>
+            <button id="logoutBtn" class="profile-btn secondary">🚪 Выйти</button>
         </div>
     </div>
-    <div class="right-panel">
-        <div class="panel-header">⚡ PIXEL BATTLE ⚡</div>
-        <div class="tab-strip">
-            <div class="tab-btn active" data-tab="battle">🎨 БИТВА</div>
-            <div class="tab-btn" data-tab="chat">💬 ЧАТ</div>
-            <div class="tab-btn" data-tab="clans">🏰 КЛАНЫ</div>
-            <div class="tab-btn" data-tab="profile">👤 ПРОФИЛЬ</div>
-        </div>
-        <div class="tab-content">
-            <div id="battleTab" class="tab-pane active">
-                <div class="panel-section">
-                    <div style="display:flex; justify-content:space-between;">
-                        <span>🎨 ПАЛИТРА</span>
-                        <span>👥 <span id="onlineCount">0</span></span>
-                    </div>
-                    <div id="colorPaletteGrid" class="color-palette-grid"></div>
-                    <div class="cooldown-bar-big"><div id="cooldownFill" class="cooldown-fill-big"></div></div>
-                    <div id="cooldownText" style="text-align:center; font-size:0.8rem;">✅ ГОТОВ</div>
-                </div>
-                <div class="panel-section">
-                    <div>🔫 КУРСОР ПОКАЖЕТ ВЛАДЕЛЬЦА</div>
-                    <div style="font-size:0.7rem; color:#aaa;">Колесико мыши — зум | Зажми ЛКМ — таскай</div>
-                </div>
-            </div>
-            <div id="chatTab" class="tab-pane" style="display:none;">
-                <div class="panel-section">
-                    <div>💬 ОБЩИЙ ЧАТ (ЛС)</div>
-                    <div class="chat-messages-list" id="chatMessagesList"></div>
-                    <div class="dm-target" id="dmTargetDisplay">⚡ Личный чат ни с кем</div>
-                    <input type="text" id="chatInput" placeholder="Введите сообщение...">
-                </div>
-                <div class="panel-section">
-                    <div>👥 ПОЛЬЗОВАТЕЛИ</div>
-                    <div id="usersListContainer" style="max-height:200px; overflow-y:auto;"></div>
-                </div>
-            </div>
-            <div id="clansTab" class="tab-pane" style="display:none;">
-                <div class="panel-section">
-                    <div id="myClanBlock">🏰 Вы не в клане</div>
-                    <button id="createClanButton">⚔️ СОЗДАТЬ КЛАН</button>
-                    <button id="leaveClanButton">🚪 ПОКИНУТЬ КЛАН</button>
-                </div>
-                <div class="panel-section">
-                    <div>🌍 ВСЕ КЛАНЫ</div>
-                    <div id="allClansList"></div>
-                </div>
-            </div>
-            <div id="profileTab" class="tab-pane" style="display:none;">
-                <div class="panel-section">
-                    <img id="profileAvatar" width="80" height="80" style="border-radius:50%; margin:0 auto; display:block; border:2px solid #ff3300;">
-                    <input type="text" id="avatarUrlInput" placeholder="URL аватара">
-                    <textarea id="profileBioInput" rows="3" placeholder="О себе..."></textarea>
-                    <button id="saveProfileButton">💾 СОХРАНИТЬ</button>
-                    <button id="logoutButton" style="background:#990000;">🚪 ВЫЙТИ</button>
-                </div>
-            </div>
-        </div>
+</div>
+<div class="canvas-area">
+    <div class="online-indicator">
+        <div class="pulse"></div>
+        <span>Онлайн: <span id="onlineCount">0</span></span>
+    </div>
+    <div class="canvas-wrapper" id="canvasWrapper">
+        <canvas id="pixelCanvas" width="1023" height="1023"></canvas>
+    </div>
+    <div class="zoom-controls">
+        <button class="zoom-btn" id="zoomOut">−</button>
+        <span id="zoomLevel" style="min-width:50px;text-align:center;">100%</span>
+        <button class="zoom-btn" id="zoomIn">+</button>
+        <button class="zoom-btn" id="resetView">⟲</button>
     </div>
 </div>
 <script src="/socket.io/socket.io.js"></script>
@@ -948,53 +738,21 @@ function generateGameHTML() {
 }
 
 function generateLoginHTML() {
-    return `<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><title>Вход в Pixel Battle</title>
-<style>
-body{margin:0;background:#0a0f1e;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif}
-.box{background:#1e2a3a;padding:40px;border-radius:30px;text-align:center;width:320px}
-input{width:90%;padding:12px;margin:10px 0;border-radius:50px;border:none;background:#2c3e50;color:white}
-button{background:#e67e22;border:none;padding:12px;border-radius:40px;color:white;font-weight:bold;width:100%;margin-top:10px;cursor:pointer}
-.error{color:#ff6b6b;margin-top:10px}
-h1{color:white}
-</style>
-</head>
-<body>
-<div class="box">
-<h1>⚔️ PIXEL BATTLE ⚔️</h1>
-<div id="error" class="error"></div>
-<input type="text" id="username" placeholder="Никнейм">
-<input type="password" id="password" placeholder="Пароль">
-<button onclick="login()">Войти</button>
-<button onclick="register()" style="background:#2c3e50;">Регистрация</button>
-</div>
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PIXEL • Вход</title>
+<style>body{background:#f5f7fa;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;}.box{background:#fff;padding:40px;border-radius:40px;width:360px;box-shadow:0 20px 40px rgba(0,0,0,0.05);}input{width:100%;padding:16px;margin:12px 0;border:1px solid #ddd;border-radius:30px;font-size:1rem;}button{width:100%;padding:16px;border:none;border-radius:30px;background:#1a1a1a;color:#fff;font-weight:600;margin:10px 0;cursor:pointer;}.error{color:#e74c3c;margin-top:10px;}</style>
+</head><body><div class="box"><h1 style="margin-bottom:20px;">NOWKIE BATTLE</h1><div id="error" class="error"></div>
+<input id="username" placeholder="Логин"><input id="password" type="password" placeholder="Пароль">
+<button onclick="login()">Войти</button><button onclick="register()" style="background:#f0f0f0;color:#1a1a1a;">Регистрация</button></div>
 <script>
-async function login(){
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-    const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
-    const data=await res.json();
-    if(data.success) location.href='/';
-    else error.innerText=data.error;
-}
-async function register(){
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-    const res=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
-    const data=await res.json();
-    if(data.success) alert('Регистрация успешна! Теперь войдите.');
-    else error.innerText=data.error;
-}
-</script>
-</body>
-</html>`;
+async function login(){const u=username.value,p=password.value;const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success)location.href='/';else error.innerText=d.error;}
+async function register(){const u=username.value,p=password.value;const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success)alert('Успешно! Теперь войдите.');else error.innerText=d.error;}
+</script></body></html>`;
 }
 
 server.listen(PORT, () => {
     console.log(`\n╔══════════════════════════════════════════╗`);
-    console.log(`║   💀 PIXEL BATTLE HARDCORE EDITION 💀  ║`);
-    console.log(`║   http://localhost:${PORT}               ║`);
-    console.log(`║   ЗУМ КОЛЕСИКОМ | 1000x1000 | 100+ ЦВЕТОВ ║`);
+    console.log(`║        NOWKIE PIXEL BATTLE v2.0         ║`);
+    console.log(`║        http://localhost:${PORT}           ║`);
+    console.log(`║    Холст 1023x1023 | Палитра по клику    ║`);
     console.log(`╚══════════════════════════════════════════╝\n`);
 });
