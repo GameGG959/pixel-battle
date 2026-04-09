@@ -740,7 +740,7 @@ canvas{display:block;image-rendering:crisp-edges;image-rendering:pixelated;borde
 function generateLoginHTML() {
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PIXEL • Вход</title>
 <style>body{background:#f5f7fa;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;}.box{background:#fff;padding:40px;border-radius:40px;width:360px;box-shadow:0 20px 40px rgba(0,0,0,0.05);}input{width:100%;padding:16px;margin:12px 0;border:1px solid #ddd;border-radius:30px;font-size:1rem;}button{width:100%;padding:16px;border:none;border-radius:30px;background:#1a1a1a;color:#fff;font-weight:600;margin:10px 0;cursor:pointer;}.error{color:#e74c3c;margin-top:10px;}</style>
-</head><body><div class="box"><h1 style="margin-bottom:20px;">NOWKIE BATTLE</h1><div id="error" class="error"></div>
+</head><body><div class="box"><h1 style="margin-bottom:20px;">PIXEL BATTLE</h1><div id="error" class="error"></div>
 <input id="username" placeholder="Логин"><input id="password" type="password" placeholder="Пароль">
 <button onclick="login()">Войти</button><button onclick="register()" style="background:#f0f0f0;color:#1a1a1a;">Регистрация</button></div>
 <script>
