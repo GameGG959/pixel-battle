@@ -18,6 +18,7 @@ const COOLDOWN = 20000;     // 20 секунд
 // ========== БАЗА ДАННЫХ ==========
 const db = new sqlite3.Database('./pixelbattle.db');
 db.serialize(() => {
+    // Пользователи
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
@@ -26,6 +27,7 @@ db.serialize(() => {
         avatar_data TEXT DEFAULT '',
         bio TEXT DEFAULT ''
     )`);
+    // Кланы
     db.run(`CREATE TABLE IF NOT EXISTS clans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE,
@@ -44,6 +46,7 @@ db.serialize(() => {
         status TEXT,
         created_at INTEGER
     )`);
+    // Личные сообщения
     db.run(`CREATE TABLE IF NOT EXISTS private_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         from_user_id INTEGER,
@@ -52,12 +55,44 @@ db.serialize(() => {
         timestamp INTEGER,
         is_read INTEGER DEFAULT 0
     )`);
+    // Пиксели (сохранение холста)
+    db.run(`CREATE TABLE IF NOT EXISTS pixels (
+        x INTEGER,
+        y INTEGER,
+        color TEXT,
+        owner_id INTEGER,
+        owner_username TEXT,
+        owner_avatar TEXT,
+        PRIMARY KEY (x, y)
+    )`);
+    // Добавление колонок, если их нет (для совместимости)
     db.run(`ALTER TABLE users ADD COLUMN avatar_data TEXT DEFAULT ''`, () => {});
     db.run(`ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''`, () => {});
 });
 
+// Инициализация холста из БД
 let grid = Array(SIZE).fill().map(() => Array(SIZE).fill('#FFFFFF'));
 let pixelOwners = Array(SIZE).fill().map(() => Array(SIZE).fill(null));
+
+// Загружаем сохранённые пиксели из БД
+db.all(`SELECT * FROM pixels`, (err, rows) => {
+    if (err) {
+        console.error('Ошибка загрузки пикселей:', err);
+        return;
+    }
+    rows.forEach(row => {
+        if (row.x >= 0 && row.x < SIZE && row.y >= 0 && row.y < SIZE) {
+            grid[row.x][row.y] = row.color;
+            pixelOwners[row.x][row.y] = {
+                userId: row.owner_id,
+                username: row.owner_username,
+                avatarData: row.owner_avatar || ''
+            };
+        }
+    });
+    console.log(`Загружено ${rows.length} пикселей из БД.`);
+});
+
 let onlineUsers = new Map();
 let onlineCount = 0;
 
@@ -227,9 +262,17 @@ io.on('connection', (socket) => {
         const { x, y, color } = data;
         if (x >= 0 && x < SIZE && y >= 0 && y < SIZE) {
             grid[x][y] = color;
-            pixelOwners[x][y] = { userId: socket.userId, username: socket.username, avatarData: socket.avatarData };
+            const ownerInfo = { userId: socket.userId, username: socket.username, avatarData: socket.avatarData };
+            pixelOwners[x][y] = ownerInfo;
             socket.lastPixel = now;
-            io.emit('pixel', { x, y, color, owner: { username: socket.username, userId: socket.userId, avatarData: socket.avatarData } });
+            
+            // Сохраняем пиксель в БД (перезаписываем, если уже был)
+            db.run(`INSERT OR REPLACE INTO pixels (x, y, color, owner_id, owner_username, owner_avatar) VALUES (?, ?, ?, ?, ?, ?)`,
+                [x, y, color, socket.userId, socket.username, socket.avatarData],
+                (err) => { if (err) console.error('Ошибка сохранения пикселя:', err); }
+            );
+            
+            io.emit('pixel', { x, y, color, owner: ownerInfo });
         }
     });
 
@@ -303,7 +346,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// ========== ГЕНЕРАЦИЯ HTML (NOWKIE STYLE – ИСПРАВЛЕНО) ==========
+// ========== ГЕНЕРАЦИЯ HTML (без изменений) ==========
 const clientScript = `
     const canvas = document.getElementById('pixelCanvas');
     const ctx = canvas.getContext('2d');
@@ -608,7 +651,7 @@ const clientScript = `
 function generateGameHTML() {
     return `<!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KRYTOY • Pixel Battle</title>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>PIXEL • Pixel Battle</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',sans-serif;}
 body{background:#f5f7fa;display:flex;height:100vh;overflow:hidden;}
@@ -751,8 +794,8 @@ async function register(){const u=username.value,p=password.value;const r=await 
 
 server.listen(PORT, () => {
     console.log(`\n╔══════════════════════════════════════════╗`);
-    console.log(`║        NOWKIE PIXEL BATTLE v2.0         ║`);
+    console.log(`║        PIXEL BATTLE v2.0 (SAVE)         ║`);
     console.log(`║        http://localhost:${PORT}           ║`);
-    console.log(`║    Холст 1023x1023 | Палитра по клику    ║`);
+    console.log(`║    Холст 1023x1023 | Сохранение в БД     ║`);
     console.log(`╚══════════════════════════════════════════╝\n`);
 });
