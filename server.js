@@ -11,9 +11,9 @@ const io = socketIo(server);
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 
-const PORT = 3269;
+const PORT = 3271;
 const SIZE = 93;            // 93×93 клетки → холст 1023×1023
-const COOLDOWN = 20000;     // 20 секунд
+const COOLDOWN = 5000;     // 20 секунд
 
 // ========== БАЗА ДАННЫХ ==========
 const db = new sqlite3.Database('./pixelbattle.db');
@@ -64,28 +64,38 @@ db.serialize(() => {
     db.run(`ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''`, () => {});
 });
 
-// Инициализация холста из БД
+// Инициализация холста (будет заполнена из БД)
 let grid = Array(SIZE).fill().map(() => Array(SIZE).fill('#FFFFFF'));
 let pixelOwners = Array(SIZE).fill().map(() => Array(SIZE).fill(null));
 
-// Загружаем сохранённые пиксели
+// Загружаем сохранённые пиксели И ТОЛЬКО ПОСЛЕ ЭТОГО запускаем сервер
 db.all(`SELECT pixels.x, pixels.y, pixels.color, users.id as userId, users.username, users.avatar_data 
         FROM pixels LEFT JOIN users ON pixels.owner_id = users.id`, (err, rows) => {
-    if (!err) {
-        rows.forEach(row => {
-            if (row.x >= 0 && row.x < SIZE && row.y >= 0 && row.y < SIZE) {
-                grid[row.x][row.y] = row.color;
-                if (row.userId) {
-                    pixelOwners[row.x][row.y] = {
-                        userId: row.userId,
-                        username: row.username,
-                        avatarData: row.avatar_data || ''
-                    };
-                }
-            }
-        });
+    if (err) {
+        console.error('Ошибка загрузки пикселей из БД:', err);
+        process.exit(1);
     }
-    console.log(`Загружено ${rows.length} пикселей из БД.`);
+
+    rows.forEach(row => {
+        if (row.x >= 0 && row.x < SIZE && row.y >= 0 && row.y < SIZE) {
+            grid[row.x][row.y] = row.color;
+            if (row.userId) {
+                pixelOwners[row.x][row.y] = {
+                    userId: row.userId,
+                    username: row.username,
+                    avatarData: row.avatar_data || ''
+                };
+            }
+        }
+    });
+
+    console.log(`✅ Загружено ${rows.length} пикселей из БД.`);
+
+    // Теперь можно запускать сервер — холст полностью готов
+    server.listen(PORT, () => {
+        console.log(`\n🚀 Pixel Battle запущен: http://localhost:${PORT}`);
+        console.log(`📦 Холст ${SIZE*11}x${SIZE*11}, сохранение в БД активно.\n`);
+    });
 });
 
 let onlineUsers = new Map();
@@ -220,6 +230,7 @@ io.on('connection', (socket) => {
     onlineCount++;
     io.emit('updateOnline', onlineCount);
     
+    // Отправляем актуальное состояние холста (уже загруженное при старте)
     const ownersForClient = pixelOwners.map(row => row.map(cell => cell ? { username: cell.username, userId: cell.userId, avatarData: cell.avatarData } : null));
     socket.emit('initGrid', { grid, pixelOwners: ownersForClient });
 
@@ -435,23 +446,23 @@ const clientScript = `
         return null;
     }
 
-    function handleWheel(e) {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        const oldScale = scale;
-        let newScale = scale * delta;
-        newScale = Math.min(8, Math.max(0.5, newScale));
-        if(newScale === scale) return;
-        const rect = wrapper.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-        const newX = mouseX - (mouseX - translateX) * (newScale / oldScale);
-        const newY = mouseY - (mouseY - translateY) * (newScale / oldScale);
-        translateX = newX;
-        translateY = newY;
-        scale = newScale;
-        applyTransform();
-    }
+function handleWheel(e) {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const oldScale = scale;
+    let newScale = scale * delta;
+
+    // Динамический минимальный масштаб, чтобы холст помещался в окно
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const minScaleX = wrapperRect.width / canvasWidth;
+    const minScaleY = wrapperRect.height / canvasHeight;
+    const minScale = Math.min(minScaleX, minScaleY) * 0.95; // 0.95 для небольшого отступа
+
+    newScale = Math.min(8, Math.max(minScale, newScale));
+    // ... остальной код без изменений
+}
 
     function onMouseDown(e) {
         isDragging = true;
@@ -776,8 +787,3 @@ async function login(){const u=username.value,p=password.value;const r=await fet
 async function register(){const u=username.value,p=password.value;const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success)alert('Успешно! Теперь войдите.');else error.innerText=d.error;}
 </script></body></html>`;
 }
-
-server.listen(PORT, () => {
-    console.log(`\n✅ Pixel Battle запущен: http://localhost:${PORT}`);
-    console.log(`📦 Холст 1023x1023, сохранение в БД активно.\n`);
-});
